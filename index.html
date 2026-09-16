@@ -143,6 +143,22 @@
             let customImageLoaded = false;
             let defaultHeadImages = [];
 
+            // Scrollable character bar state
+            let charScrollX = 0;
+            let charDragStartX = 0;
+            let charDragStartScrollX = 0;
+            let charIsDragging = false;
+            let charDragMoved = false;
+
+            // Layout constants for character bar
+            const SELECT_ICON_R = 28;
+            const SELECT_SPACING = 72;
+            const SELECT_BAR_Y = 440;
+            const SELECT_BAR_TOP = SELECT_BAR_Y - 40;
+            const SELECT_BAR_BOTTOM = SELECT_BAR_Y + 40;
+            const SELECT_LEFT_PADDING = 20;
+            const SELECT_RIGHT_PADDING = 20;
+
             // Built‑in drawing helpers
             function drawSmileyFace(ctx, x, y, size, rotation) {
                 ctx.save(); ctx.translate(x, y); ctx.rotate(rotation); const s = size;
@@ -201,8 +217,9 @@
                         { id: 'head1', name: 'Head 1', src: 'assets/imghead1.png' },
                         { id: 'head2', name: 'Head 2', src: 'assets/imghead2.png' },
                         { id: 'head3', name: 'Head 3', src: 'assets/imghead3.png' },
-                        { id: 'head4', name: 'Head 4', src: 'assets/imghead4.png' },
-                        { id: 'head5', name: 'My Head', src: 'assets/imghead5.png' }
+                        { id: 'head4', name: 'Head 4', src: 'assets/imghead4.png' }
+                        // Add your custom head here:
+                        // { id: 'head5', name: 'My Head', src: 'assets/imghead5.png' }
                     ];
                     
                     let loadedCount = 0;
@@ -309,6 +326,13 @@
                         ctx.fillText('+', x, y);
                     }
                 });
+
+                // Clamp scroll after list changes
+                const total = characterOptions.length;
+                const contentWidth = (total - 1) * SELECT_SPACING + 2 * SELECT_ICON_R;
+                const availableWidth = GAME_WIDTH - SELECT_LEFT_PADDING - SELECT_RIGHT_PADDING;
+                const maxScroll = Math.max(0, contentWidth - availableWidth);
+                charScrollX = Math.max(0, Math.min(charScrollX, maxScroll));
             }
 
             // ============ INPUT HANDLING ============
@@ -330,36 +354,29 @@
                 };
             }
 
-            function handleInput(e) {
+            function isInCharSelectBar(coords) {
+                return coords.y >= SELECT_BAR_TOP && coords.y <= SELECT_BAR_BOTTOM;
+            }
+
+            function handlePointerDown(e) {
                 if (e.type === 'touchstart') e.preventDefault();
                 
+                const coords = getGameCoords(e);
+                
                 if (gameState === STATE.READY) {
-                    const coords = getGameCoords(e);
-                    const iconY = 440;
-                    const iconR = 28;
-                    const spacing = 72;
-                    const totalIcons = characterOptions.length;
-                    const startX = (GAME_WIDTH - (totalIcons * spacing)) / 2 + spacing/2;
-                    
-                    for (let i = 0; i < totalIcons; i++) {
-                        const cx = startX + i * spacing;
-                        const dist = Math.hypot(coords.x - cx, coords.y - iconY);
-                        if (dist <= iconR) {
-                            const char = characterOptions[i];
-                            if (char.type === 'upload_trigger') {
-                                uploadInput.click();
-                                return;
-                            } else {
-                                selectedCharacterId = char.id;
-                                buildCharacterList();
-                                return;
-                            }
-                        }
+                    if (isInCharSelectBar(coords)) {
+                        // Start dragging
+                        charIsDragging = true;
+                        charDragMoved = false;
+                        charDragStartX = coords.x;
+                        charDragStartScrollX = charScrollX;
+                        return;
                     }
+                    // Tap outside bar: start game
                     startGame();
                     return;
                 }
-
+                
                 switch (gameState) {
                     case STATE.PLAYING: flap(); break;
                     case STATE.DEAD: resetGame(); break;
@@ -367,12 +384,69 @@
                 }
             }
 
-            canvas.addEventListener('click', handleInput);
-            canvas.addEventListener('touchstart', handleInput, { passive: false });
+            function handlePointerMove(e) {
+                if (!charIsDragging) return;
+                if (e.type === 'touchmove') e.preventDefault();
+                
+                const coords = getGameCoords(e);
+                const deltaX = coords.x - charDragStartX;
+                
+                if (Math.abs(deltaX) > 5) charDragMoved = true;
+                
+                const total = characterOptions.length;
+                const contentWidth = (total - 1) * SELECT_SPACING + 2 * SELECT_ICON_R;
+                const availableWidth = GAME_WIDTH - SELECT_LEFT_PADDING - SELECT_RIGHT_PADDING;
+                const maxScroll = Math.max(0, contentWidth - availableWidth);
+                
+                charScrollX = charDragStartScrollX - deltaX;
+                charScrollX = Math.max(0, Math.min(charScrollX, maxScroll));
+            }
+
+            function handlePointerUp(e) {
+                if (!charIsDragging) return;
+                charIsDragging = false;
+                
+                if (!charDragMoved) {
+                    // Treat as tap: check which icon was tapped
+                    const coords = getGameCoords(e);
+                    const iconY = SELECT_BAR_Y;
+                    const iconR = SELECT_ICON_R;
+                    const spacing = SELECT_SPACING;
+                    const total = characterOptions.length;
+                    const baseStartX = SELECT_LEFT_PADDING + iconR;
+                    
+                    for (let i = 0; i < total; i++) {
+                        const cx = baseStartX + i * spacing - charScrollX;
+                        const dist = Math.hypot(coords.x - cx, coords.y - iconY);
+                        if (dist <= iconR) {
+                            const char = characterOptions[i];
+                            if (char.type === 'upload_trigger') {
+                                uploadInput.click();
+                            } else {
+                                selectedCharacterId = char.id;
+                                buildCharacterList();
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Attach pointer events
+            canvas.addEventListener('mousedown', handlePointerDown);
+            canvas.addEventListener('mousemove', handlePointerMove);
+            canvas.addEventListener('mouseup', handlePointerUp);
+            canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
+            canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+            canvas.addEventListener('touchend', handlePointerUp);
+
+            // Keyboard controls (only for playing/dead)
             document.addEventListener('keydown', (e) => {
                 if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
                     e.preventDefault();
-                    handleInput(e);
+                    if (gameState === STATE.PLAYING) flap();
+                    else if (gameState === STATE.DEAD) resetGame();
+                    else if (gameState === STATE.READY) startGame();
                 }
             });
 
@@ -619,28 +693,63 @@
 
             function drawCharacterSelection() {
                 if (gameState !== STATE.READY) return;
-                const iconY = 440;
-                const iconR = 28;
-                const spacing = 72;
+                
+                const iconY = SELECT_BAR_Y;
+                const iconR = SELECT_ICON_R;
+                const spacing = SELECT_SPACING;
                 const total = characterOptions.length;
-                const startX = (GAME_WIDTH - (total * spacing)) / 2 + spacing/2;
+                const contentWidth = (total - 1) * spacing + 2 * iconR;
+                const availableWidth = GAME_WIDTH - SELECT_LEFT_PADDING - SELECT_RIGHT_PADDING;
+                const maxScroll = Math.max(0, contentWidth - availableWidth);
                 
+                // Clamp scroll
+                charScrollX = Math.max(0, Math.min(charScrollX, maxScroll));
+                
+                const baseStartX = SELECT_LEFT_PADDING + iconR;
+                
+                // Draw background band
                 ctx.fillStyle = 'rgba(0,0,0,0.35)';
-                ctx.fillRect(0, iconY-40, GAME_WIDTH, 80);
+                ctx.fillRect(0, SELECT_BAR_TOP, GAME_WIDTH, SELECT_BAR_BOTTOM - SELECT_BAR_TOP);
                 
+                // Draw icons
                 for (let i = 0; i < total; i++) {
-                    const cx = startX + i * spacing;
+                    const cx = baseStartX + i * spacing - charScrollX;
                     const char = characterOptions[i];
+                    
+                    // Skip if outside view (with some margin)
+                    if (cx < -iconR - 10 || cx > GAME_WIDTH + iconR + 10) continue;
                     
                     ctx.fillStyle = (char.id === selectedCharacterId) ? '#FFD700' : '#EEE';
                     ctx.beginPath(); ctx.arc(cx, iconY, iconR, 0, Math.PI*2); ctx.fill();
                     ctx.strokeStyle = (char.id === selectedCharacterId) ? '#B8860B' : '#888';
                     ctx.lineWidth = 3; ctx.stroke();
                     
-                    char.drawPreview(ctx, cx, iconY, iconR-4);
+                    char.drawPreview(ctx, cx, iconY, iconR - 4);
                     
                     ctx.fillStyle = '#FFF'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center';
                     ctx.fillText(char.name, cx, iconY + iconR + 16);
+                }
+                
+                // Draw scroll indicators if scrollable
+                if (maxScroll > 0) {
+                    const arrowAlpha = 0.4 + Math.sin(frameCount * 0.1) * 0.3;
+                    ctx.fillStyle = `rgba(255,255,255,${arrowAlpha})`;
+                    if (charScrollX > 5) {
+                        // Left arrow
+                        ctx.beginPath();
+                        ctx.moveTo(15, SELECT_BAR_Y);
+                        ctx.lineTo(25, SELECT_BAR_Y - 10);
+                        ctx.lineTo(25, SELECT_BAR_Y + 10);
+                        ctx.fill();
+                    }
+                    if (charScrollX < maxScroll - 5) {
+                        // Right arrow
+                        ctx.beginPath();
+                        ctx.moveTo(GAME_WIDTH - 15, SELECT_BAR_Y);
+                        ctx.lineTo(GAME_WIDTH - 25, SELECT_BAR_Y - 10);
+                        ctx.lineTo(GAME_WIDTH - 25, SELECT_BAR_Y + 10);
+                        ctx.fill();
+                    }
                 }
             }
 
@@ -770,8 +879,7 @@
                 console.log('   - assets/imghead2.png');
                 console.log('   - assets/imghead3.png');
                 console.log('   - assets/imghead4.png');
-                console.log('   - assets/imghead5.png');
-                
+                console.log('   - (optional) assets/imghead5.png — add it in loadDefaultHeadImages()');
             });
         })();
     </script>
