@@ -341,7 +341,11 @@
                 const scaleX = GAME_WIDTH / rect.width;
                 const scaleY = GAME_HEIGHT / rect.height;
                 let clientX, clientY;
-                if (e.touches) {
+                // changedTouches works for touchstart, touchmove, AND touchend
+                if (e.changedTouches && e.changedTouches.length) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else if (e.touches && e.touches.length) {
                     clientX = e.touches[0].clientX;
                     clientY = e.touches[0].clientY;
                 } else {
@@ -403,6 +407,7 @@
             }
 
             function handlePointerUp(e) {
+                if (e.type === 'touchend') e.preventDefault();
                 if (!charIsDragging) return;
                 charIsDragging = false;
                 
